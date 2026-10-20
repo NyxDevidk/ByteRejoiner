@@ -1,0 +1,6 @@
+sourcesDaWeb/
+config.json
+rejoin.log*
+rejoin.lock
+*.bad
+__pycache__/
