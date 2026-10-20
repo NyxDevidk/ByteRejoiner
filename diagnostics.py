@@ -54,6 +54,17 @@ def run(shell, cfg, launch_test=False):
         add(OK if ok else WARN, f"probe: {name}", note)
     status = mon.observe()
     add(INFO, "Roblox right now", status)
+    pid = mon.pid()
+    if pid:
+        lc = shell.run(["logcat", "-d", "-t", "20", "--pid", pid], timeout=10)
+        ok_lc = lc.rc == 0 and bool(lc.out)
+        add(OK if ok_lc else WARN, "logcat of Roblox (disconnect detection)",
+            "readable" if ok_lc else "not readable: disconnects while Roblox stays open won't be detected")
+    else:
+        add(INFO, "logcat of Roblox (disconnect detection)", "open Roblox and rerun to check")
+    fs = shell.has("am") and shell.prefix != []
+    add(OK if fs else WARN, "force-stop before relaunch",
+        "privileged shell set (shell_prefix)" if fs else "no shell_prefix: force-stop will likely be denied")
     net = ugphone.network_ok()
     add(OK if net else WARN, "network (www.roblox.com:443)", "reachable" if net else "unreachable")
     add(INFO, "wake lock", "termux-wake-lock available" if shell.has("termux-wake-lock") else "unavailable (install termux-api app + pkg)")

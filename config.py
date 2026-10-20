@@ -22,6 +22,9 @@ DEFAULTS = {
     "give_up_cooldown": 300.0,        # pause after exhausting retries, then try a fresh incident
     "launch_on_start": False,
     "recover_if_closed_on_start": True,
+    "rejoin_on_disconnect": True,     # relaunch when Roblox logs a disconnect/kick code (process still alive)
+    "rejoin_on_pid_change": True,     # relaunch when Roblox restarted by itself (new pid)
+    "force_stop_before_launch": True, # am force-stop first when Roblox is alive but out of the game
     "blind_relaunch_minutes": 0,      # fallback when no probe works: relaunch every N min (0 = off)
     "log_level": "info",              # debug | info | warn | error
 }
@@ -34,7 +37,8 @@ _RANGES = {
     "verify_timeout": (5, 600), "give_up_cooldown": (0, 86400), "blind_relaunch_minutes": (0, 1440),
 }
 _INT_RANGES = {"confirm_polls": (1, 20), "max_retries": (0, 1000)}
-_BOOLS = ("launch_on_start", "recover_if_closed_on_start")
+_BOOLS = ("launch_on_start", "recover_if_closed_on_start", "rejoin_on_disconnect",
+          "rejoin_on_pid_change", "force_stop_before_launch")
 _PKG_RE = re.compile(r"^[A-Za-z][\w]*(\.[A-Za-z][\w]*)+$")
 
 _ID_RE = re.compile(r"^\d{1,19}$")

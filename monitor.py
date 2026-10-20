@@ -132,6 +132,13 @@ class Monitor:
     def can_detect_stop(self):
         return bool(self.trusted)
 
+    def pid(self):
+        """Current Roblox pid as a string, '' when not visible/running. A changed pid means the process restarted."""
+        r = self.shell.run(["pidof", self.pkg])
+        if r.rc == 0 and r.out.split():
+            return r.out.split()[0]
+        return ""
+
     def observe(self):
         """One poll -> STOPPED / FOREGROUND / BACKGROUND / RUNNING / UNKNOWN."""
         negative = False
@@ -159,6 +166,66 @@ class Monitor:
                             pass
             return RUNNING if fg is None else (FOREGROUND if fg else BACKGROUND)
         return STOPPED if negative else UNKNOWN
+
+
+_DISCONNECT_RES = (
+    re.compile(r"disconnect\s+with\s+reason:?\s*(\d+)", re.I),   # FLog::Network, what Roblox really logs
+    re.compile(r"Error\s*Code:?\s*(\d+)", re.I),
+)
+
+
+def parse_disconnect_code(line):
+    """Roblox disconnect/kick code (200-599) in a logcat line, else None. Ignores stray 'reason: 0/1' handshakes."""
+    for rx in _DISCONNECT_RES:
+        m = rx.search(line)
+        if m and 200 <= int(m.group(1)) <= 599:
+            return int(m.group(1))
+    return None
+
+
+class LogcatWatcher:
+    """Reports disconnect lines the Roblox process wrote since the last poll.
+
+    `logcat -d` re-dumps old lines every time, so seen lines are remembered. seed() marks the
+    current backlog as seen, so only lines written after it can trigger a rejoin.
+    Roblox may keep running after a disconnect, so this is the signal for 'alive but not in game'.
+    """
+
+    def __init__(self, shell, tail=800):
+        self.shell, self.tail = shell, tail
+        self._seen = set()
+        self._order = []
+
+    def _lines(self, pid):
+        r = self.shell.run(["logcat", "-d", "-v", "time", "-t", str(self.tail), "--pid", pid], timeout=10)
+        if r.missing or r.timed_out or r.rc != 0:
+            return None
+        return [ln for ln in r.out.splitlines() if ln.strip()]
+
+    def _mark(self, line):
+        if line in self._seen:
+            return False
+        self._seen.add(line)
+        self._order.append(line)
+        if len(self._order) > 4000:           # bounded memory
+            for old in self._order[:1000]:
+                self._seen.discard(old)
+            del self._order[:1000]
+        return True
+
+    def seed(self, pid):
+        for ln in self._lines(pid) or []:
+            self._mark(ln)
+
+    def poll(self, pid):
+        """-> list of (code, line) for new disconnect lines; [] when nothing new or logcat unreadable."""
+        found = []
+        for ln in self._lines(pid) or []:
+            if self._mark(ln):
+                code = parse_disconnect_code(ln)
+                if code is not None:
+                    found.append((code, ln))
+        return found
 
 
 class StateTracker:

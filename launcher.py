@@ -1,5 +1,6 @@
 """Opening the selected experience, plus retry/backoff policy."""
 import re
+import time
 from collections import namedtuple
 
 LaunchResult = namedtuple("LaunchResult", "sent method detail")
@@ -16,8 +17,17 @@ def deep_links(place_id):
 
 
 class Launcher:
-    def __init__(self, shell, pkg):
-        self.shell, self.pkg = shell, pkg
+    def __init__(self, shell, pkg, sleep=time.sleep):
+        self.shell, self.pkg, self.sleep = shell, pkg, sleep
+        self.force_stop_ok = None   # result of the last force-stop attempt, None if never tried
+
+    def force_stop(self):
+        """Kill a lingering Roblox so the deep link starts a fresh session instead of the app home screen.
+        Needs root or adb-shell privileges; failure is recorded, not fatal."""
+        r = self.shell.run(["am", "force-stop", self.pkg], timeout=15)
+        self.force_stop_ok = not r.missing and not r.timed_out and r.rc == 0
+        self.sleep(1.5)
+        return self.force_stop_ok
 
     def _am_view(self, url):
         # -p pins the intent to the Roblox app so a browser can't grab it.
@@ -27,12 +37,14 @@ class Launcher:
     def _am_ok(r):
         return (not r.missing and not r.timed_out and r.rc == 0 and not _AM_ERR.search(r.out + "\n" + r.err))
 
-    def launch(self, place_id):
+    def launch(self, place_id, force_stop=False):
         """Try each launch method until one is accepted by Android.
 
         'sent' means Android accepted the intent, NOT that Roblox is running or that the game loaded.
         The caller must verify with the monitor.
         """
+        if force_stop:
+            self.force_stop()
         errors = []
         for url in deep_links(place_id):
             r = self._am_view(url)

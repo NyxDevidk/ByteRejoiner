@@ -11,7 +11,7 @@ import diagnostics
 import logger
 import ugphone
 from launcher import Launcher
-from monitor import Monitor
+from monitor import LogcatWatcher, Monitor
 from supervisor import Supervisor
 
 HOME = os.environ.get("ROBLOX_REJOIN_HOME") or os.path.dirname(os.path.abspath(__file__))
@@ -88,7 +88,8 @@ def monitor_forever(store, stop):
                   f"Status: {mode}\nSelected experience: {cfg['experience_id']}\n"
                   f"Roblox status: {roblox}\nReconnect attempts: {attempts}\n")
 
-        sup = Supervisor(cfg, mon, Launcher(shell, pkg), stop, ugphone.network_ok, on_state=show)
+        sup = Supervisor(cfg, mon, Launcher(shell, pkg), stop, ugphone.network_ok, on_state=show,
+                         watcher=LogcatWatcher(shell))
         sup.run()
         return 0
     finally:
@@ -118,6 +119,9 @@ SETTINGS = [
     ("verify_timeout", "Launch verify timeout (s)"), ("give_up_cooldown", "Pause after giving up (s)"),
     ("launch_on_start", "Launch on startup (true/false)"),
     ("recover_if_closed_on_start", "Recover if already closed at start (true/false)"),
+    ("rejoin_on_disconnect", "Rejoin on disconnect/kick code in logcat (true/false)"),
+    ("rejoin_on_pid_change", "Rejoin when Roblox restarts by itself (true/false)"),
+    ("force_stop_before_launch", "Force-stop Roblox before relaunch if alive (true/false)"),
     ("blind_relaunch_minutes", "Blind relaunch every N min (0 = off)"),
     ("log_level", "Log level (debug/info/warn/error)"),
     ("roblox_package", "Roblox package ('' = auto)"), ("shell_prefix", "Shell prefix ('' = none)"),
