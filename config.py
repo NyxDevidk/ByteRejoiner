@@ -5,6 +5,8 @@ import re
 import tempfile
 from urllib.parse import urlparse, parse_qs
 
+from webhook import URL_RE
+
 DEFAULTS = {
     "experience_id": "",
     "saved_experiences": [],          # [{"name": str, "id": str}]
@@ -25,7 +27,9 @@ DEFAULTS = {
     "rejoin_on_disconnect": True,     # relaunch when Roblox logs a disconnect/kick code (process still alive)
     "rejoin_on_pid_change": True,     # relaunch when Roblox restarted by itself (new pid)
     "force_stop_before_launch": True, # am force-stop first when Roblox is alive but out of the game
-    "blind_relaunch_minutes": 0,      # fallback when no probe works: relaunch every N min (0 = off)
+    "webhook_url": "",                # Discord webhook for status messages ("" = off). Keep it private.
+    "webhook_username": "Roblox Auto-Rejoin",
+    "blind_relaunch_minutes": 0,     # fallback when no probe works: relaunch every N min (0 = off)
     "log_level": "info",              # debug | info | warn | error
 }
 
@@ -41,6 +45,7 @@ _BOOLS = ("launch_on_start", "recover_if_closed_on_start", "rejoin_on_disconnect
           "rejoin_on_pid_change", "force_stop_before_launch")
 _PKG_RE = re.compile(r"^[A-Za-z][\w]*(\.[A-Za-z][\w]*)+$")
 
+_WEBHOOK_RE = URL_RE
 _ID_RE = re.compile(r"^\d{1,19}$")
 _GAME_PATH_RE = re.compile(r"/(?:[a-z]{2}(?:-[a-z]{2})?/)?games/(\d{1,19})(?:/|$)", re.I)
 
@@ -112,6 +117,14 @@ def validate(cfg):
         raise ConfigError("roblox_package must be an Android package name like com.roblox.client, or empty.")
     if not isinstance(out["shell_prefix"], str):
         raise ConfigError("shell_prefix must be a string.")
+    hook = out["webhook_url"]
+    if not isinstance(hook, str) or (hook and not _WEBHOOK_RE.match(hook.strip())):
+        raise ConfigError("webhook_url must be a Discord webhook URL "
+                          "(https://discord.com/api/webhooks/<id>/<token>) or empty.")
+    out["webhook_url"] = hook.strip()
+    name = out["webhook_username"]
+    if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80:
+        raise ConfigError("webhook_username must be 1-80 characters.")
     saved = out["saved_experiences"]
     if not isinstance(saved, list):
         raise ConfigError("saved_experiences must be a list.")

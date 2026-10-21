@@ -7,10 +7,12 @@ from monitor import (RUNNING_STATES, STOPPED, UNKNOWN, StateTracker)
 
 
 class Supervisor:
-    def __init__(self, cfg, monitor, launcher, stop, net_check, clock=time.monotonic, on_state=None, watcher=None):
+    def __init__(self, cfg, monitor, launcher, stop, net_check, clock=time.monotonic, on_state=None, watcher=None, notifier=None):
         """stop: object with .is_set() and .wait(seconds) -> bool (threading.Event fits).
-        watcher: LogcatWatcher-like (seed/poll) or None to disable disconnect detection."""
+        watcher: LogcatWatcher-like (seed/poll) or None to disable disconnect detection.
+        notifier: object with .send(level, title, description, fields) (webhook) or None."""
         self.cfg, self.monitor, self.launcher, self.watcher = cfg, monitor, launcher, watcher
+        self.notifier = notifier
         self.last_pid = ""
         self.stop, self.net_check, self.clock = stop, net_check, clock
         self.on_state = on_state or (lambda *_: None)
@@ -26,6 +28,11 @@ class Supervisor:
         self._warned_blind = False
 
     # -- helpers -----------------------------------------------------------
+    def _notify(self, level, title, description="", **fields):
+        if self.notifier:
+            fields.setdefault("Experience", self.cfg["experience_id"])
+            self.notifier.send(level, title, description, fields)
+
     def _publish(self):
         self.on_state(self.mode, self.roblox, self.total_attempts)
 
@@ -121,6 +128,7 @@ class Supervisor:
         self.mode = "RECOVERING"
         self._publish()
         self.log.info("Incident #%d: %s", self.incidents, reason)
+        self._notify("warn", "Roblox needs a rejoin", reason, Incident=self.incidents)
         attempts = 0
         wait = self.cfg["reopen_delay"] if delay is None else delay
         while not self.stop.is_set():
@@ -144,20 +152,26 @@ class Supervisor:
                 outcome = self._verify(old_pid if force_stop else "")
                 if outcome == "running":
                     self.log.info("Roblox launch detected. (Process is up; entering the game server is not verifiable.)")
+                    self._notify("success", "Roblox relaunched", "Process is up. Joining the server is not verifiable.",
+                                 Attempts=attempts)
                     self._finish()
                     return True
                 if outcome == "unverified":
                     self.log.warning("Launch accepted by Android, but this shell cannot confirm Roblox started.")
+                    self._notify("warn", "Launch sent, not confirmed", "Android accepted the launch; cannot verify from this shell.")
                     self._finish(armed=False)
                     return True
                 self.log.warning("Launch accepted but Roblox did not appear within %.0fs.", self.cfg["verify_timeout"])
             else:
                 self.log.error("Launch failed: %s", res.detail)
+                self._notify("error", "Launch failed", res.detail[:500], Attempt=attempts)
             if self.policy.exhausted(attempts):
                 self.log.error("Giving up after %d attempts. Pausing %.0fs, then trying a fresh incident.",
                                attempts, self.cfg["give_up_cooldown"])
                 self.mode = "GAVE_UP"
                 self._publish()
+                self._notify("error", "Giving up for now", f"{attempts} attempts failed. Pausing "
+                             f"{self.cfg['give_up_cooldown']:.0f}s before trying again.")
                 self._sleep(self.cfg["give_up_cooldown"])
                 self._finish(armed=True)
                 return False
@@ -176,6 +190,7 @@ class Supervisor:
     def run(self):
         cfg = self.cfg
         self.log.info("Monitoring started.")
+        self._notify("info", "Monitoring started", Detection="full" if self.monitor.can_detect_stop else "limited")
         if not self.monitor.can_detect_stop:
             self.log.warning("No trustworthy process probe on this shell: a closed Roblox cannot be detected.")
             for name, (ok, note) in self.monitor.calibration.items():
@@ -208,6 +223,7 @@ class Supervisor:
         self.mode = "STOPPED"
         self._publish()
         self.log.info("Monitoring stopped.")
+        self._notify("info", "Monitoring stopped", Rejoins=self.total_attempts)
 
     def _log_change(self, prev, st):
         if st == STOPPED:

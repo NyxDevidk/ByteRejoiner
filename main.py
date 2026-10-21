@@ -13,6 +13,7 @@ import ugphone
 from launcher import Launcher
 from monitor import LogcatWatcher, Monitor
 from supervisor import Supervisor
+from webhook import make_notifier, mask
 
 HOME = os.environ.get("ROBLOX_REJOIN_HOME") or os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HOME, "config.json")
@@ -88,9 +89,13 @@ def monitor_forever(store, stop):
                   f"Status: {mode}\nSelected experience: {cfg['experience_id']}\n"
                   f"Roblox status: {roblox}\nReconnect attempts: {attempts}\n")
 
-        sup = Supervisor(cfg, mon, Launcher(shell, pkg), stop, ugphone.network_ok, on_state=show,
-                         watcher=LogcatWatcher(shell))
-        sup.run()
+        notifier = make_notifier(cfg)
+        try:
+            sup = Supervisor(cfg, mon, Launcher(shell, pkg), stop, ugphone.network_ok, on_state=show,
+                             watcher=LogcatWatcher(shell), notifier=notifier)
+            sup.run()
+        finally:
+            notifier.close()    # flush the final "stopped" message
         return 0
     finally:
         release_lock()
@@ -122,6 +127,7 @@ SETTINGS = [
     ("rejoin_on_disconnect", "Rejoin on disconnect/kick code in logcat (true/false)"),
     ("rejoin_on_pid_change", "Rejoin when Roblox restarts by itself (true/false)"),
     ("force_stop_before_launch", "Force-stop Roblox before relaunch if alive (true/false)"),
+    ("webhook_url", "Discord webhook URL ('' = off)"), ("webhook_username", "Webhook display name"),
     ("blind_relaunch_minutes", "Blind relaunch every N min (0 = off)"),
     ("log_level", "Log level (debug/info/warn/error)"),
     ("roblox_package", "Roblox package ('' = auto)"), ("shell_prefix", "Shell prefix ('' = none)"),
@@ -154,7 +160,9 @@ def settings_menu(store):
     while True:
         print("\n-- Settings --")
         for i, (k, label) in enumerate(SETTINGS, 1):
-            print(f"{i:2}. {label}: {store.data[k]!r}")
+            val = store.data[k]
+            shown = (mask(val) if val else "(off)") if k == "webhook_url" else repr(val)
+            print(f"{i:2}. {label}: {shown}")
         c = input("Number to change (Enter = back): ").strip()
         if not c:
             return
@@ -202,7 +210,7 @@ def menu(store):
         cur = store.data["experience_id"] or "(none)"
         print(f"\n=== Roblox Auto-Rejoin | UGPhone ===\nSelected experience: {cur}")
         print("1. Enter experience URL\n2. Enter experience ID\n3. Select saved experience\n"
-              "4. View selected experience\n5. Settings\n6. Start monitoring\n7. Run diagnostics\n0. Quit")
+              "4. View selected experience\n5. Settings\n6. Start monitoring\n7. Run diagnostics\n8. Test webhook\n0. Quit")
         try:
             c = input("> ").strip()
         except EOFError:
@@ -221,10 +229,24 @@ def menu(store):
             run_until_interrupt(store)
         elif c == "7":
             do_diagnose(store, launch_test=input("Also start Roblox as a launch test? [y/N] ").strip().lower() == "y")
+        elif c == "8":
+            test_webhook(store)
         elif c == "0":
             return
         else:
-            print("Choose 0-7.")
+            print("Choose 0-8.")
+
+
+def test_webhook(store):
+    notifier = make_notifier(store.data)
+    if not notifier.enabled:
+        print("No webhook set. Use: python main.py set-webhook <URL>")
+        return 1
+    ok, detail = notifier.send_sync("info", "Webhook test", "Roblox Auto-Rejoin can reach this channel.",
+                                    {"Experience": store.data["experience_id"] or "(none)"})
+    notifier.close()
+    print(f"Webhook {mask(store.data['webhook_url'])}: {detail}")
+    return 0 if ok else 1
 
 
 def do_diagnose(store, launch_test=False):
@@ -243,6 +265,9 @@ def main(argv=None):
     d.add_argument("--launch-test", action="store_true", help="also start Roblox once to verify launching")
     g = sub.add_parser("set-game", help="select experience by URL or ID")
     g.add_argument("target")
+    w = sub.add_parser("set-webhook", help="set the Discord webhook URL, or 'off' to disable")
+    w.add_argument("url")
+    sub.add_parser("webhook-test", help="send a test message to the webhook")
     args = ap.parse_args(argv)
 
     store = config.Store(CONFIG_PATH)
@@ -256,6 +281,16 @@ def main(argv=None):
         return run_until_interrupt(store)
     if args.cmd == "diagnose":
         return do_diagnose(store, args.launch_test)
+    if args.cmd == "set-webhook":
+        try:
+            store.update(webhook_url="" if args.url.lower() == "off" else args.url)
+        except config.ConfigError as exc:
+            print(f"Invalid: {exc}")
+            return 1
+        print("Webhook disabled." if not store.data["webhook_url"] else f"Webhook saved ({mask(store.data['webhook_url'])}).")
+        return 0
+    if args.cmd == "webhook-test":
+        return test_webhook(store)
     if args.cmd == "set-game":
         try:
             store.save_experience(config.parse_experience(args.target))

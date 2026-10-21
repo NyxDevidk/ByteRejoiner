@@ -66,6 +66,16 @@ A crash does not always kill the process: Android may restart Roblox by itself, 
 When either fires, `am force-stop` runs first (`force_stop_before_launch`, needs root/adb; if denied it is logged and skipped), then the game is relaunched. Success requires a *new* pid.
 Cost: one `pidof` and one `logcat -d -t 800` per poll while Roblox runs.
 
+## Discord webhook
+
+```sh
+python main.py set-webhook "https://discord.com/api/webhooks/<id>/<token>"
+python main.py webhook-test        # sends one test message
+python main.py set-webhook off     # disable
+```
+Messages: monitoring started/stopped, rejoin needed (with reason), relaunched, launch failed, giving up. Sent from a background thread, so Discord being slow or down never delays monitoring; failures are only logged. Mentions are disabled.
+The URL is a secret: anyone with it can post to your channel. It lives only in `config.json` (git-ignored), is masked in the menu and logs, and must never be committed. If it leaks, delete the webhook in Discord and create a new one.
+
 If `diagnose` says crash detection is **not available**, choose a fallback:
 
 1. **ADB loopback (best, unverified on UGPhone):** if UGPhone lets you enable ADB / developer options, connect from Termux (`pkg install android-tools; adb connect localhost:5555`) and set `"shell_prefix": "adb -s localhost:5555 shell"`. Every command then runs with shell privileges and `dumpsys` works. Re-run `diagnose` to confirm.
